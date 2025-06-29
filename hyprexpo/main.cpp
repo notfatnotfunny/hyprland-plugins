@@ -12,8 +12,7 @@
 #include "globals.hpp"
 #include "overview.hpp"
 
-// Hook instances using the new hook system
-inline CHookSystem* g_pHyprexpoHookSystem = nullptr;
+// Hook instances using the old hook system (ARM64 compatible)
 inline CFunctionHook* g_pRenderWorkspaceHook = nullptr;
 inline CFunctionHook* g_pAddDamageAHook = nullptr;
 inline CFunctionHook* g_pAddDamageBHook = nullptr;
@@ -189,8 +188,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     try {
-        // Initialize the new hook system
-        g_pHyprexpoHookSystem = new CHookSystem();
+        // Use the old CFunctionHook system (ARM64 compatible)
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Initializing ARM64-compatible version...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
 
         // Find and hook the renderWorkspace function
         auto FNS = HyprlandAPI::findFunctionsByName(PHANDLE, "renderWorkspace");
@@ -199,7 +198,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             throw std::runtime_error("[he] No fns for hook renderWorkspace");
         }
 
-        g_pRenderWorkspaceHook = g_pHyprexpoHookSystem->initHook(PHANDLE, FNS[0].address, (void*)hkRenderWorkspace);
+        g_pRenderWorkspaceHook = HyprlandAPI::createFunctionHook(PHANDLE, FNS[0].address, (void*)hkRenderWorkspace);
         if (!g_pRenderWorkspaceHook || !g_pRenderWorkspaceHook->hook()) {
             failNotif("Failed to hook renderWorkspace");
             throw std::runtime_error("[he] Failed to hook renderWorkspace");
@@ -212,7 +211,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             throw std::runtime_error("[he] No fns for hook addDamageEPK15pixman_region32");
         }
 
-        g_pAddDamageBHook = g_pHyprexpoHookSystem->initHook(PHANDLE, FNS[0].address, (void*)hkAddDamageB);
+        g_pAddDamageBHook = HyprlandAPI::createFunctionHook(PHANDLE, FNS[0].address, (void*)hkAddDamageB);
         if (!g_pAddDamageBHook || !g_pAddDamageBHook->hook()) {
             failNotif("Failed to hook addDamageB");
             throw std::runtime_error("[he] Failed to hook addDamageB");
@@ -225,7 +224,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             throw std::runtime_error("[he] No fns for hook _ZN8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
         }
 
-        g_pAddDamageAHook = g_pHyprexpoHookSystem->initHook(PHANDLE, FNS[0].address, (void*)hkAddDamageA);
+        g_pAddDamageAHook = HyprlandAPI::createFunctionHook(PHANDLE, FNS[0].address, (void*)hkAddDamageA);
         if (!g_pAddDamageAHook || !g_pAddDamageAHook->hook()) {
             failNotif("Failed to hook addDamageA");
             throw std::runtime_error("[he] Failed to hook addDamageA");
@@ -234,13 +233,25 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     } catch (const std::exception& e) {
         failNotif("Exception during hook initialization: " + std::string(e.what()));
         // Clean up any partial initialization
-        if (g_pHyprexpoHookSystem) {
-            delete g_pHyprexpoHookSystem;
-            g_pHyprexpoHookSystem = nullptr;
+        if (g_pRenderWorkspaceHook) {
+            g_pRenderWorkspaceHook->unhook();
+            delete g_pRenderWorkspaceHook;
+            g_pRenderWorkspaceHook = nullptr;
+        }
+        if (g_pAddDamageAHook) {
+            g_pAddDamageAHook->unhook();
+            delete g_pAddDamageAHook;
+            g_pAddDamageAHook = nullptr;
+        }
+        if (g_pAddDamageBHook) {
+            g_pAddDamageBHook->unhook();
+            delete g_pAddDamageBHook;
+            g_pAddDamageBHook = nullptr;
         }
         throw;
     }
 
+    // Register callbacks
     static auto P = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preRender", [](void* self, SCallbackInfo& info, std::any param) {
         if (!g_pOverview)
             return;
@@ -265,24 +276,28 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     HyprlandAPI::reloadConfig();
 
-    return {"hyprexpo", "A plugin for an overview", "Vaxry", "1.0"};
+    HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] ARM64-compatible plugin initialized successfully!", CHyprColor{0.2, 0.8, 0.2, 1.0}, 3000);
+
+    return {"hyprexpo", "A plugin for an overview (ARM64 compatible)", "Vaxry", "1.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
     g_pHyprRenderer->m_renderPass.removeAllOfType("COverviewPassElement");
     
-    // Clean up the hook system
-    if (g_pHyprexpoHookSystem) {
-        if (g_pRenderWorkspaceHook) {
-            g_pHyprexpoHookSystem->removeHook(g_pRenderWorkspaceHook);
-        }
-        if (g_pAddDamageAHook) {
-            g_pHyprexpoHookSystem->removeHook(g_pAddDamageAHook);
-        }
-        if (g_pAddDamageBHook) {
-            g_pHyprexpoHookSystem->removeHook(g_pAddDamageBHook);
-        }
-        delete g_pHyprexpoHookSystem;
-        g_pHyprexpoHookSystem = nullptr;
+    // Clean up the hooks using the old system
+    if (g_pRenderWorkspaceHook) {
+        g_pRenderWorkspaceHook->unhook();
+        delete g_pRenderWorkspaceHook;
+        g_pRenderWorkspaceHook = nullptr;
     }
-}
+    if (g_pAddDamageAHook) {
+        g_pAddDamageAHook->unhook();
+        delete g_pAddDamageAHook;
+        g_pAddDamageAHook = nullptr;
+    }
+    if (g_pAddDamageBHook) {
+        g_pAddDamageBHook->unhook();
+        delete g_pAddDamageBHook;
+        g_pAddDamageBHook = nullptr;
+    }
+} 
