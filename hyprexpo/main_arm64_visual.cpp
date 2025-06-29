@@ -98,7 +98,7 @@ static void swipeEnd(void* self, SCallbackInfo& info, std::any param) {
 }
 
 static void renderOverview() {
-    if (!overviewActive) return;
+    if (!overviewActive || !overviewFramebuffer) return;
     
     const auto PMONITOR = g_pCompositor->m_lastMonitor.lock();
     if (!PMONITOR) return;
@@ -138,6 +138,9 @@ static void renderOverview() {
         
         // Draw workspace background
         g_pHyprOpenGL->renderRect(workspaceBox, CHyprColor{0.1, 0.1, 0.1, 0.8}, 0);
+        
+        // Draw workspace number
+        // (This would require text rendering which is complex, so we'll skip for now)
     }
 }
 
@@ -149,8 +152,34 @@ static void onExpoDispatcher(std::string arg) {
         
     if (arg == "select") { 
         if (overviewActive) {
-            // Simplified workspace selection - just close overview for now
-            HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Workspace selection not implemented in this version", CHyprColor{0.8, 0.8, 0.2, 1.0}, 2000);
+            // Get mouse position and determine which workspace to select
+            const auto mousePos = g_pInputManager->getMouseCoordsInternal();
+            const auto PMONITOR = g_pCompositor->m_lastMonitor.lock();
+            
+            if (PMONITOR) {
+                static auto* const* PCOLUMNS = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprexpo:columns")->getDataStaticPtr();
+                static auto* const* PGAPS    = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprexpo:gap_size")->getDataStaticPtr();
+                
+                int SIDE_LENGTH = **PCOLUMNS;
+                int GAP_WIDTH   = **PGAPS;
+                
+                Vector2D tileSize = PMONITOR->m_size / SIDE_LENGTH;
+                Vector2D tileRenderSize = (PMONITOR->m_size - Vector2D{GAP_WIDTH * PMONITOR->m_scale, GAP_WIDTH * PMONITOR->m_scale} * (SIDE_LENGTH - 1)) / SIDE_LENGTH;
+                
+                Vector2D localPos = mousePos - PMONITOR->m_position;
+                int col = localPos.x / (tileRenderSize.x + GAP_WIDTH);
+                int row = localPos.y / (tileRenderSize.y + GAP_WIDTH);
+                int workspaceID = row * SIDE_LENGTH + col + 1;
+                
+                if (col >= 0 && col < SIDE_LENGTH && row >= 0 && row < SIDE_LENGTH) {
+                    auto PWORKSPACE = g_pCompositor->getWorkspaceByID(workspaceID);
+                    if (PWORKSPACE) {
+                        g_pCompositor->changeWorkspaceByID(workspaceID);
+                        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Switched to workspace " + std::to_string(workspaceID), CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
+                    }
+                }
+            }
+            
             overviewActive = false;
         }
         return;
@@ -197,10 +226,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     try {
-        // ARM64-compatible initialization without hooks
-        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Initializing ARM64-compatible version (no hooks)...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
+        // Visual ARM64-compatible initialization
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Initializing visual ARM64-compatible version...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
 
-        // Register callbacks (no hooks)
+        // Register callbacks
         static auto P = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preRender", [](void* self, SCallbackInfo& info, std::any param) {
             if (overviewActive) {
                 renderOverview();
@@ -227,9 +256,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
         pluginInitialized = true;
 
-        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] ARM64-compatible plugin initialized successfully (no hooks)!", CHyprColor{0.2, 0.8, 0.2, 1.0}, 3000);
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Visual ARM64-compatible plugin initialized successfully!", CHyprColor{0.2, 0.8, 0.2, 1.0}, 3000);
 
-        return {"hyprexpo", "A plugin for an overview (ARM64 compatible, no hooks)", "Vaxry", "1.0"};
+        return {"hyprexpo", "A plugin for an overview (Visual ARM64 compatible)", "Vaxry", "1.0"};
 
     } catch (const std::exception& e) {
         failNotif("Exception during initialization: " + std::string(e.what()));
