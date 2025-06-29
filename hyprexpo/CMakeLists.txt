@@ -22,6 +22,13 @@ pkg_check_modules(deps REQUIRED IMPORTED_TARGET
     wayland-server
     xkbcommon
 )
+
+# Add include directories for the hook system
+target_include_directories(hyprexpo PRIVATE 
+    ${CMAKE_SOURCE_DIR}/../src/plugins
+    ${CMAKE_SOURCE_DIR}/../src
+)
+
 target_link_libraries(hyprexpo PRIVATE rt PkgConfig::deps)
 
 install(TARGETS hyprexpo)

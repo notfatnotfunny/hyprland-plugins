@@ -1,0 +1,7 @@
+/home/notfatnotfunny/Hyprland/hyprexpo/build/CMakeFiles/hyprexpo.dir
+/home/notfatnotfunny/Hyprland/hyprexpo/build/CMakeFiles/edit_cache.dir
+/home/notfatnotfunny/Hyprland/hyprexpo/build/CMakeFiles/rebuild_cache.dir
+/home/notfatnotfunny/Hyprland/hyprexpo/build/CMakeFiles/list_install_components.dir
+/home/notfatnotfunny/Hyprland/hyprexpo/build/CMakeFiles/install.dir
+/home/notfatnotfunny/Hyprland/hyprexpo/build/CMakeFiles/install/local.dir
+/home/notfatnotfunny/Hyprland/hyprexpo/build/CMakeFiles/install/strip.dir

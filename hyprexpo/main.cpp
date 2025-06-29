@@ -7,17 +7,16 @@
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/desktop/DesktopTypes.hpp>
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/plugins/HookSystem.hpp>
 
 #include "globals.hpp"
 #include "overview.hpp"
 
-// Methods
+// Hook instances using the new hook system
+inline CHookSystem* g_pHyprexpoHookSystem = nullptr;
 inline CFunctionHook* g_pRenderWorkspaceHook = nullptr;
-inline CFunctionHook* g_pAddDamageHookA      = nullptr;
-inline CFunctionHook* g_pAddDamageHookB      = nullptr;
-typedef void (*origRenderWorkspace)(void*, PHLMONITOR, PHLWORKSPACE, timespec*, const CBox&);
-typedef void (*origAddDamageA)(void*, const CBox&);
-typedef void (*origAddDamageB)(void*, const pixman_region32_t*);
+inline CFunctionHook* g_pAddDamageAHook = nullptr;
+inline CFunctionHook* g_pAddDamageBHook = nullptr;
 
 // Do NOT change this function.
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -28,17 +27,22 @@ static bool renderingOverview = false;
 
 //
 static void hkRenderWorkspace(void* thisptr, PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, timespec* now, const CBox& geometry) {
-    if (!g_pOverview || renderingOverview || g_pOverview->blockOverviewRendering || g_pOverview->pMonitor != pMonitor)
-        ((origRenderWorkspace)(g_pRenderWorkspaceHook->m_original))(thisptr, pMonitor, pWorkspace, now, geometry);
-    else
+    if (!g_pOverview || renderingOverview || g_pOverview->blockOverviewRendering || g_pOverview->pMonitor != pMonitor) {
+        // Call original function
+        typedef void (*origRenderWorkspace)(void*, PHLMONITOR, PHLWORKSPACE, timespec*, const CBox&);
+        ((origRenderWorkspace)g_pRenderWorkspaceHook->m_original)(thisptr, pMonitor, pWorkspace, now, geometry);
+    } else {
         g_pOverview->render();
+    }
 }
 
 static void hkAddDamageA(void* thisptr, const CBox& box) {
     const auto PMONITOR = (CMonitor*)thisptr;
 
     if (!g_pOverview || g_pOverview->pMonitor != PMONITOR->m_self || g_pOverview->blockDamageReporting) {
-        ((origAddDamageA)g_pAddDamageHookA->m_original)(thisptr, box);
+        // Call original function
+        typedef void (*origAddDamageA)(void*, const CBox&);
+        ((origAddDamageA)g_pAddDamageAHook->m_original)(thisptr, box);
         return;
     }
 
@@ -49,7 +53,9 @@ static void hkAddDamageB(void* thisptr, const pixman_region32_t* rg) {
     const auto PMONITOR = (CMonitor*)thisptr;
 
     if (!g_pOverview || g_pOverview->pMonitor != PMONITOR->m_self || g_pOverview->blockDamageReporting) {
-        ((origAddDamageB)g_pAddDamageHookB->m_original)(thisptr, rg);
+        // Call original function
+        typedef void (*origAddDamageB)(void*, const pixman_region32_t*);
+        ((origAddDamageB)g_pAddDamageBHook->m_original)(thisptr, rg);
         return;
     }
 
@@ -176,37 +182,46 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("[he] Version mismatch");
     }
 
+    // Initialize the new hook system
+    g_pHyprexpoHookSystem = new CHookSystem();
+
+    // Find and hook the renderWorkspace function
     auto FNS = HyprlandAPI::findFunctionsByName(PHANDLE, "renderWorkspace");
     if (FNS.empty()) {
         failNotif("no fns for hook renderWorkspace");
         throw std::runtime_error("[he] No fns for hook renderWorkspace");
     }
 
-    g_pRenderWorkspaceHook = HyprlandAPI::createFunctionHook(PHANDLE, FNS[0].address, (void*)hkRenderWorkspace);
+    g_pRenderWorkspaceHook = g_pHyprexpoHookSystem->initHook(PHANDLE, FNS[0].address, (void*)hkRenderWorkspace);
+    if (!g_pRenderWorkspaceHook || !g_pRenderWorkspaceHook->hook()) {
+        failNotif("Failed to hook renderWorkspace");
+        throw std::runtime_error("[he] Failed to hook renderWorkspace");
+    }
 
+    // Find and hook the addDamage function with pixman_region32_t parameter
     FNS = HyprlandAPI::findFunctionsByName(PHANDLE, "addDamageEPK15pixman_region32");
     if (FNS.empty()) {
         failNotif("no fns for hook addDamageEPK15pixman_region32");
         throw std::runtime_error("[he] No fns for hook addDamageEPK15pixman_region32");
     }
 
-    g_pAddDamageHookB = HyprlandAPI::createFunctionHook(PHANDLE, FNS[0].address, (void*)hkAddDamageB);
+    g_pAddDamageBHook = g_pHyprexpoHookSystem->initHook(PHANDLE, FNS[0].address, (void*)hkAddDamageB);
+    if (!g_pAddDamageBHook || !g_pAddDamageBHook->hook()) {
+        failNotif("Failed to hook addDamageB");
+        throw std::runtime_error("[he] Failed to hook addDamageB");
+    }
 
+    // Find and hook the addDamage function with CBox parameter
     FNS = HyprlandAPI::findFunctionsByName(PHANDLE, "_ZN8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
     if (FNS.empty()) {
         failNotif("no fns for hook _ZN8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
         throw std::runtime_error("[he] No fns for hook _ZN8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
     }
 
-    g_pAddDamageHookA = HyprlandAPI::createFunctionHook(PHANDLE, FNS[0].address, (void*)hkAddDamageA);
-
-    bool success = g_pRenderWorkspaceHook->hook();
-    success      = success && g_pAddDamageHookA->hook();
-    success      = success && g_pAddDamageHookB->hook();
-
-    if (!success) {
-        failNotif("Failed initializing hooks");
-        throw std::runtime_error("[he] Failed initializing hooks");
+    g_pAddDamageAHook = g_pHyprexpoHookSystem->initHook(PHANDLE, FNS[0].address, (void*)hkAddDamageA);
+    if (!g_pAddDamageAHook || !g_pAddDamageAHook->hook()) {
+        failNotif("Failed to hook addDamageA");
+        throw std::runtime_error("[he] Failed to hook addDamageA");
     }
 
     static auto P = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preRender", [](void* self, SCallbackInfo& info, std::any param) {
@@ -238,4 +253,19 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     g_pHyprRenderer->m_renderPass.removeAllOfType("COverviewPassElement");
+    
+    // Clean up the hook system
+    if (g_pHyprexpoHookSystem) {
+        if (g_pRenderWorkspaceHook) {
+            g_pHyprexpoHookSystem->removeHook(g_pRenderWorkspaceHook);
+        }
+        if (g_pAddDamageAHook) {
+            g_pHyprexpoHookSystem->removeHook(g_pAddDamageAHook);
+        }
+        if (g_pAddDamageBHook) {
+            g_pHyprexpoHookSystem->removeHook(g_pAddDamageBHook);
+        }
+        delete g_pHyprexpoHookSystem;
+        g_pHyprexpoHookSystem = nullptr;
+    }
 }
