@@ -7,19 +7,17 @@
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/desktop/DesktopTypes.hpp>
 #include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/render/Framebuffer.hpp>
 
 #include "globals.hpp"
+#include "overview.hpp"
 
 // Do NOT change this function.
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
     return HYPRLAND_API_VERSION;
 }
 
+static bool renderingOverview = false;
 static bool pluginInitialized = false;
-static bool overviewActive = false;
-static std::unique_ptr<CFramebuffer> overviewFramebuffer = nullptr;
-static CBox overviewBox = {0, 0, 0, 0};
 
 static float gestured       = 0;
 bool         swipeActive    = false;
@@ -48,7 +46,7 @@ static void swipeUpdate(void* self, SCallbackInfo& info, std::any param) {
             swipeDirection = 0;
     }
 
-    if (swipeActive || overviewActive)
+    if (swipeActive || g_pOverview)
         info.cancelled = true;
 
     if (!**PENABLE || e.fingers != **FINGERS || swipeDirection != 'v')
@@ -56,89 +54,41 @@ static void swipeUpdate(void* self, SCallbackInfo& info, std::any param) {
 
     info.cancelled = true;
     if (!swipeActive) {
-        if (overviewActive && (**PPOSITIVE ? 1.0 : -1.0) * e.delta.y <= 0) {
-            gestured = **PDISTANCE;
-            swipeActive = true;
+        if (g_pOverview && (**PPOSITIVE ? 1.0 : -1.0) * e.delta.y <= 0) {
+            renderingOverview = true;
+            g_pOverview       = std::make_unique<COverview>(g_pCompositor->m_lastMonitor->m_activeWorkspace, true);
+            renderingOverview = false;
+            gestured          = **PDISTANCE;
+            swipeActive       = true;
         }
-        else if (!overviewActive && (**PPOSITIVE ? 1.0 : -1.0) * e.delta.y > 0) {
-            overviewActive = true;
-            gestured = 0;
-            swipeActive = true;
-            HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Overview activated via gesture", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
+
+        else if (!g_pOverview && (**PPOSITIVE ? 1.0 : -1.0) * e.delta.y > 0) {
+            renderingOverview = true;
+            g_pOverview       = std::make_unique<COverview>(g_pCompositor->m_lastMonitor->m_activeWorkspace, true);
+            renderingOverview = false;
+            gestured          = 0;
+            swipeActive       = true;
         }
+
         else {
             return;
         }
     }
 
     gestured += (**PPOSITIVE ? 1.0 : -1.0) * e.delta.y;
-    if (gestured <= 0.01) {
+    if (gestured <= 0.01) // plugin will crash if swipe ends at <= 0
         gestured = 0.01;
-    }
-    
-    // Update overview based on gesture
-    if (gestured >= **PDISTANCE * 0.8) {
-        if (!overviewActive) {
-            overviewActive = true;
-            HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Overview fully activated", CHyprColor{0.2, 0.8, 0.2, 1.0}, 1000);
-        }
-    }
+    g_pOverview->onSwipeUpdate(gestured);
 }
 
 static void swipeEnd(void* self, SCallbackInfo& info, std::any param) {
-    if (!overviewActive)
+    if (!g_pOverview)
         return;
 
-    swipeActive = false;
+    swipeActive    = false;
     info.cancelled = true;
 
-    if (gestured >= 100) { // Threshold for selection
-        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Workspace would be selected here", CHyprColor{0.8, 0.8, 0.2, 1.0}, 2000);
-    }
-}
-
-static void renderOverview() {
-    if (!overviewActive) return;
-    
-    const auto PMONITOR = g_pCompositor->m_lastMonitor.lock();
-    if (!PMONITOR) return;
-    
-    // Get configuration
-    static auto* const* PCOLUMNS = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprexpo:columns")->getDataStaticPtr();
-    static auto* const* PGAPS    = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprexpo:gap_size")->getDataStaticPtr();
-    
-    int SIDE_LENGTH = **PCOLUMNS;
-    int GAP_WIDTH   = **PGAPS;
-    
-    // Calculate workspace grid
-    Vector2D tileSize = PMONITOR->m_size / SIDE_LENGTH;
-    Vector2D tileRenderSize = (PMONITOR->m_size - Vector2D{GAP_WIDTH * PMONITOR->m_scale, GAP_WIDTH * PMONITOR->m_scale} * (SIDE_LENGTH - 1)) / SIDE_LENGTH;
-    
-    // Render each workspace
-    for (int i = 0; i < SIDE_LENGTH * SIDE_LENGTH; ++i) {
-        int workspaceID = i + 1; // Simple workspace numbering
-        CBox workspaceBox = {
-            (i % SIDE_LENGTH) * tileRenderSize.x + (i % SIDE_LENGTH) * GAP_WIDTH,
-            (i / SIDE_LENGTH) * tileRenderSize.y + (i / SIDE_LENGTH) * GAP_WIDTH,
-            tileRenderSize.x,
-            tileRenderSize.y
-        };
-        
-        // Get workspace
-        auto PWORKSPACE = g_pCompositor->getWorkspaceByID(workspaceID);
-        if (!PWORKSPACE) {
-            PWORKSPACE = CWorkspace::create(workspaceID, PMONITOR, std::to_string(workspaceID));
-        }
-        
-        // Highlight current workspace
-        if (PWORKSPACE == PMONITOR->m_activeWorkspace) {
-            // Draw border around current workspace
-            g_pHyprOpenGL->renderRect(workspaceBox, CHyprColor{0.2, 0.8, 0.2, 1.0}, 0);
-        }
-        
-        // Draw workspace background
-        g_pHyprOpenGL->renderRect(workspaceBox, CHyprColor{0.1, 0.1, 0.1, 0.8}, 0);
-    }
+    g_pOverview->onSwipeEnd();
 }
 
 static void onExpoDispatcher(std::string arg) {
@@ -146,40 +96,36 @@ static void onExpoDispatcher(std::string arg) {
 
     if (swipeActive)
         return;
-        
     if (arg == "select") { 
-        if (overviewActive) {
-            // Simplified workspace selection - just close overview for now
-            HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Workspace selection not implemented in this version", CHyprColor{0.8, 0.8, 0.2, 1.0}, 2000);
-            overviewActive = false;
+        if (g_pOverview) {
+            g_pOverview->selectHoveredWorkspace();
+            g_pOverview->close();
         }
         return;
     }
-    
     if (arg == "toggle") {
-        if (overviewActive) {
-            overviewActive = false;
-            HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Overview deactivated", CHyprColor{0.8, 0.2, 0.2, 1.0}, 2000);
-        } else {
-            overviewActive = true;
-            HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Overview activated", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
+        if (g_pOverview)
+            g_pOverview->close();
+        else {
+            renderingOverview = true;
+            g_pOverview       = std::make_unique<COverview>(g_pCompositor->m_lastMonitor->m_activeWorkspace);
+            renderingOverview = false;
         }
         return;
     }
 
     if (arg == "off" || arg == "close" || arg == "disable") {
-        if (overviewActive) {
-            overviewActive = false;
-            HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Overview deactivated", CHyprColor{0.8, 0.2, 0.2, 1.0}, 2000);
-        }
+        if (g_pOverview)
+            g_pOverview->close();
         return;
     }
 
-    if (overviewActive)
+    if (g_pOverview)
         return;
 
-    overviewActive = true;
-    HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Overview activated", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
+    renderingOverview = true;
+    g_pOverview       = std::make_unique<COverview>(g_pCompositor->m_lastMonitor->m_activeWorkspace);
+    renderingOverview = false;
 }
 
 static void failNotif(const std::string& reason) {
@@ -197,14 +143,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     try {
-        // ARM64-compatible initialization without hooks
-        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Initializing ARM64-compatible version (no hooks)...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
+        // Simple ARM64-compatible initialization without hooks
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Initializing simple ARM64-compatible version...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
 
-        // Register callbacks (no hooks)
+        // Register callbacks only (no hooks)
         static auto P = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preRender", [](void* self, SCallbackInfo& info, std::any param) {
-            if (overviewActive) {
-                renderOverview();
-            }
+            if (!g_pOverview)
+                return;
+            g_pOverview->onPreRender();
         });
 
         static auto P2 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "swipeBegin", [](void* self, SCallbackInfo& info, std::any data) { swipeBegin(self, info, data); });
@@ -227,9 +173,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
         pluginInitialized = true;
 
-        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] ARM64-compatible plugin initialized successfully (no hooks)!", CHyprColor{0.2, 0.8, 0.2, 1.0}, 3000);
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Simple ARM64-compatible plugin initialized successfully!", CHyprColor{0.2, 0.8, 0.2, 1.0}, 3000);
 
-        return {"hyprexpo", "A plugin for an overview (ARM64 compatible, no hooks)", "Vaxry", "1.0"};
+        return {"hyprexpo", "A plugin for an overview (Simple ARM64 compatible)", "Vaxry", "1.0"};
 
     } catch (const std::exception& e) {
         failNotif("Exception during initialization: " + std::string(e.what()));
@@ -239,6 +185,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     pluginInitialized = false;
-    overviewActive = false;
-    overviewFramebuffer.reset();
+    
+    if (g_pOverview) {
+        g_pOverview->close();
+        g_pOverview.reset();
+    }
+    
+    g_pHyprRenderer->m_renderPass.removeAllOfType("COverviewPassElement");
 } 
