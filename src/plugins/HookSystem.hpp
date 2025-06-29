@@ -8,6 +8,15 @@
 #define HANDLE                   void*
 #define HOOK_TRAMPOLINE_MAX_SIZE 64
 
+// Architecture detection
+#if defined(__x86_64__)
+    #define ARCH_X86_64 1
+#elif defined(__aarch64__) || defined(__arm64__)
+    #define ARCH_ARM64 1
+#else
+    #define ARCH_UNKNOWN 1
+#endif
+
 class CFunctionHook {
   public:
     CFunctionHook(HANDLE owner, void* source, void* destination);
@@ -47,7 +56,11 @@ class CFunctionHook {
     SInstructionProbe probeMinimumJumpSize(void* start, size_t min);
     SInstructionProbe getInstructionLenAt(void* start);
 
+#if defined(ARCH_X86_64)
     SAssembly         fixInstructionProbeRIPCalls(const SInstructionProbe& probe);
+#elif defined(ARCH_ARM64)
+    SAssembly         fixInstructionProbePCRelative(const SInstructionProbe& probe);
+#endif
 
     friend class CHookSystem;
 };

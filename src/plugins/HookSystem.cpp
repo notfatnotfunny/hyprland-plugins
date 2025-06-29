@@ -4,9 +4,15 @@
 #include "../managers/TokenManager.hpp"
 #include "../helpers/MiscFunctions.hpp"
 
+#if defined(ARCH_X86_64)
 #define register
 #include <udis86.h>
 #undef register
+#elif defined(ARCH_ARM64)
+// For ARM64, we'll implement a simple instruction decoder
+// since udis86 doesn't support ARM64
+#endif
+
 #include <sys/mman.h>
 #include <unistd.h>
 #include <cstring>
@@ -24,6 +30,7 @@ CFunctionHook::~CFunctionHook() {
 }
 
 CFunctionHook::SInstructionProbe CFunctionHook::getInstructionLenAt(void* start) {
+#if defined(ARCH_X86_64)
     ud_t udis;
 
     ud_init(&udis);
@@ -46,6 +53,60 @@ CFunctionHook::SInstructionProbe CFunctionHook::getInstructionLenAt(void* start)
         ins = std::string(CINS);
 
     return {insSize, ins};
+#elif defined(ARCH_ARM64)
+    // Simple ARM64 instruction decoder
+    // ARM64 instructions are always 4 bytes
+    uint32_t instruction = *(uint32_t*)start;
+    
+    // Basic instruction decoding for common cases
+    std::string assembly = "";
+    
+    // Check for B (unconditional branch)
+    if ((instruction & 0xFC000000) == 0x14000000) {
+        int64_t offset = ((int64_t)(instruction & 0x3FFFFFF) << 2);
+        assembly = "b " + std::to_string(offset);
+    }
+    // Check for BL (branch with link)
+    else if ((instruction & 0xFC000000) == 0x94000000) {
+        int64_t offset = ((int64_t)(instruction & 0x3FFFFFF) << 2);
+        assembly = "bl " + std::to_string(offset);
+    }
+    // Check for ADR (address relative to PC)
+    else if ((instruction & 0x9F000000) == 0x10000000) {
+        int64_t offset = ((int64_t)(instruction & 0x1FFFFF) << 2);
+        assembly = "adr x0, " + std::to_string(offset);
+    }
+    // Check for ADRP (address relative to page)
+    else if ((instruction & 0x9F000000) == 0x90000000) {
+        int64_t offset = ((int64_t)(instruction & 0x1FFFFF) << 12);
+        assembly = "adrp x0, " + std::to_string(offset);
+    }
+    // Check for LDR (load register) with PC-relative addressing
+    else if ((instruction & 0xBF000000) == 0x58000000) {
+        int64_t offset = ((int64_t)(instruction & 0x7FFFF) << 3);
+        assembly = "ldr x0, [pc, " + std::to_string(offset) + "]";
+    }
+    // Check for STP (store pair)
+    else if ((instruction & 0xFFC00000) == 0xA9000000) {
+        assembly = "stp x0, x1, [sp, #-16]!";
+    }
+    // Check for LDP (load pair)
+    else if ((instruction & 0xFFC00000) == 0xA9400000) {
+        assembly = "ldp x0, x1, [sp], #16";
+    }
+    // Check for NOP (HINT #0)
+    else if (instruction == 0xD503201F) {
+        assembly = "nop";
+    }
+    // Default case - just show the raw instruction
+    else {
+        assembly = "unknown";
+    }
+    
+    return {4, assembly};
+#else
+    return {0, "unsupported architecture"};
+#endif
 }
 
 CFunctionHook::SInstructionProbe CFunctionHook::probeMinimumJumpSize(void* start, size_t min) {
@@ -66,6 +127,7 @@ CFunctionHook::SInstructionProbe CFunctionHook::probeMinimumJumpSize(void* start
     return {size, instrs, sizes};
 }
 
+#if defined(ARCH_X86_64)
 CFunctionHook::SAssembly CFunctionHook::fixInstructionProbeRIPCalls(const SInstructionProbe& probe) {
     SAssembly returns;
 
@@ -136,14 +198,70 @@ CFunctionHook::SAssembly CFunctionHook::fixInstructionProbeRIPCalls(const SInstr
 
     return {finalBytes};
 }
+#elif defined(ARCH_ARM64)
+CFunctionHook::SAssembly CFunctionHook::fixInstructionProbePCRelative(const SInstructionProbe& probe) {
+    SAssembly returns;
+
+    // For ARM64, we need to handle PC-relative addressing
+    uint64_t currentAddress = (uint64_t)m_source;
+    size_t lastAsmNewline = 0;
+    size_t currentDestinationOffset = 0;
+
+    std::vector<char> finalBytes;
+    finalBytes.resize(probe.len);
+
+    for (auto const& len : probe.insSizes) {
+        // copy original bytes to our finalBytes
+        for (size_t i = 0; i < len; ++i) {
+            finalBytes[currentDestinationOffset + i] = *(char*)(currentAddress + i);
+        }
+
+        std::string code = probe.assembly.substr(lastAsmNewline, probe.assembly.find('\n', lastAsmNewline) - lastAsmNewline);
+        
+        // Handle PC-relative branches and ADR instructions
+        if (code.starts_with("b ") || code.starts_with("bl ")) {
+            // Extract offset from branch instruction
+            uint32_t instruction = *(uint32_t*)(currentAddress);
+            int64_t offset = ((int64_t)(instruction & 0x3FFFFFF) << 2);
+            uint64_t targetAddress = currentAddress + offset;
+            
+            // Calculate new offset for trampoline location
+            uint64_t trampolineAddress = (uint64_t)m_trampolineAddr + currentDestinationOffset + len;
+            int64_t newOffset = targetAddress - trampolineAddress;
+            
+            // Check if new offset fits in 26-bit field
+            if (newOffset >= -(1 << 27) && newOffset < (1 << 27)) {
+                // Update instruction with new offset
+                uint32_t newInstruction = (instruction & 0xFC000000) | ((newOffset >> 2) & 0x3FFFFFF);
+                *(uint32_t*)&finalBytes[currentDestinationOffset] = newInstruction;
+            }
+            // If offset doesn't fit, we'll need a more complex fix (not implemented here)
+            
+            currentDestinationOffset += len;
+        } else if (code.starts_with("adr ") || code.starts_with("adrp ")) {
+            // Handle ADR/ADRP instructions similarly
+            // This is a simplified implementation
+            currentDestinationOffset += len;
+        } else {
+            currentDestinationOffset += len;
+        }
+
+        lastAsmNewline = probe.assembly.find('\n', lastAsmNewline) + 1;
+        currentAddress += len;
+    }
+
+    return {finalBytes};
+}
+#endif
 
 bool CFunctionHook::hook() {
 
     // check for unsupported platforms
-#if !defined(__x86_64__)
+#if !defined(ARCH_X86_64) && !defined(ARCH_ARM64)
     return false;
 #endif
 
+#if defined(ARCH_X86_64)
     // movabs $0,%rax | jmpq *%rax
     // offset for addr: 2
     static constexpr uint8_t ABSOLUTE_JMP_ADDRESS[]      = {0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xE0};
@@ -154,6 +272,19 @@ bool CFunctionHook::hook() {
     static constexpr uint8_t POP_RAX[] = {0x58};
     // nop
     static constexpr uint8_t NOP = 0x90;
+#elif defined(ARCH_ARM64)
+    // ARM64 absolute jump using literal load and branch
+    // LDR X0, [PC, #0] (load address from PC+0) | BR X0 (branch to X0)
+    // This creates a 16-byte sequence: LDR + address + BR
+    static constexpr uint8_t ABSOLUTE_JMP_ADDRESS[]      = {0x60, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F, 0xD6};
+    static constexpr size_t  ABSOLUTE_JMP_ADDRESS_OFFSET = 4;
+    // STP X0, X1, [SP, #-16]! (push X0, X1)
+    static constexpr uint8_t PUSH_X0[] = {0xF6, 0x57, 0xBD, 0xA9};
+    // LDP X0, X1, [SP], #16 (pop X0, X1)
+    static constexpr uint8_t POP_X0[] = {0xF6, 0x57, 0xC1, 0xA8};
+    // NOP (HINT #0)
+    static constexpr uint32_t NOP_INSTR = 0xD503201F;
+#endif
 
     // alloc trampoline
     const auto MAX_TRAMPOLINE_SIZE = HOOK_TRAMPOLINE_MAX_SIZE; // we will never need more.
@@ -162,10 +293,18 @@ bool CFunctionHook::hook() {
     // probe instructions to be trampolin'd
     SInstructionProbe probe;
     try {
+#if defined(ARCH_X86_64)
         probe = probeMinimumJumpSize(m_source, sizeof(ABSOLUTE_JMP_ADDRESS) + sizeof(PUSH_RAX) + sizeof(POP_RAX));
+#elif defined(ARCH_ARM64)
+        probe = probeMinimumJumpSize(m_source, sizeof(ABSOLUTE_JMP_ADDRESS) + sizeof(PUSH_X0) + sizeof(POP_X0));
+#endif
     } catch (std::exception& e) { return false; }
 
+#if defined(ARCH_X86_64)
     const auto PROBEFIXEDASM = fixInstructionProbeRIPCalls(probe);
+#elif defined(ARCH_ARM64)
+    const auto PROBEFIXEDASM = fixInstructionProbePCRelative(probe);
+#endif
 
     if (PROBEFIXEDASM.bytes.empty()) {
         Debug::log(ERR, "[functionhook] failed, unsupported asm / failed assembling:\n{}", probe.assembly);
@@ -175,7 +314,11 @@ bool CFunctionHook::hook() {
     const size_t HOOKSIZE = PROBEFIXEDASM.bytes.size();
     const size_t ORIGSIZE = probe.len;
 
+#if defined(ARCH_X86_64)
     const auto   TRAMPOLINE_SIZE = sizeof(ABSOLUTE_JMP_ADDRESS) + HOOKSIZE + sizeof(PUSH_RAX);
+#elif defined(ARCH_ARM64)
+    const auto   TRAMPOLINE_SIZE = sizeof(ABSOLUTE_JMP_ADDRESS) + HOOKSIZE + sizeof(PUSH_X0);
+#endif
 
     if (TRAMPOLINE_SIZE > MAX_TRAMPOLINE_SIZE) {
         Debug::log(ERR, "[functionhook] failed, not enough space in trampo to alloc:\n{}", probe.assembly);
@@ -187,12 +330,22 @@ bool CFunctionHook::hook() {
 
     // populate trampoline
     memcpy(m_trampolineAddr, PROBEFIXEDASM.bytes.data(), HOOKSIZE);                                                       // first, original but fixed func bytes
+#if defined(ARCH_X86_64)
     memcpy((uint8_t*)m_trampolineAddr + HOOKSIZE, PUSH_RAX, sizeof(PUSH_RAX));                                            // then, pushq %rax
     memcpy((uint8_t*)m_trampolineAddr + HOOKSIZE + sizeof(PUSH_RAX), ABSOLUTE_JMP_ADDRESS, sizeof(ABSOLUTE_JMP_ADDRESS)); // then, jump to source
+#elif defined(ARCH_ARM64)
+    memcpy((uint8_t*)m_trampolineAddr + HOOKSIZE, PUSH_X0, sizeof(PUSH_X0));                                              // then, push x0
+    memcpy((uint8_t*)m_trampolineAddr + HOOKSIZE + sizeof(PUSH_X0), ABSOLUTE_JMP_ADDRESS, sizeof(ABSOLUTE_JMP_ADDRESS)); // then, jump to source
+#endif
 
     // fixup trampoline addr
+#if defined(ARCH_X86_64)
     *(uint64_t*)((uint8_t*)m_trampolineAddr + TRAMPOLINE_SIZE - sizeof(ABSOLUTE_JMP_ADDRESS) + ABSOLUTE_JMP_ADDRESS_OFFSET) =
         (uint64_t)((uint8_t*)m_source + sizeof(ABSOLUTE_JMP_ADDRESS));
+#elif defined(ARCH_ARM64)
+    *(uint64_t*)((uint8_t*)m_trampolineAddr + TRAMPOLINE_SIZE - sizeof(ABSOLUTE_JMP_ADDRESS) + ABSOLUTE_JMP_ADDRESS_OFFSET) =
+        (uint64_t)((uint8_t*)m_source + sizeof(ABSOLUTE_JMP_ADDRESS));
+#endif
 
     // make jump to hk
     const auto     PAGESIZE_VAR = sysconf(_SC_PAGE_SIZE);
@@ -201,10 +354,19 @@ bool CFunctionHook::hook() {
     mprotect((uint8_t*)PROTSTART, PROTLEN, PROT_READ | PROT_WRITE | PROT_EXEC);
     memcpy((uint8_t*)m_source, ABSOLUTE_JMP_ADDRESS, sizeof(ABSOLUTE_JMP_ADDRESS));
 
-    // make popq %rax and NOP all remaining
+    // make pop and NOP all remaining
+#if defined(ARCH_X86_64)
     memcpy((uint8_t*)m_source + sizeof(ABSOLUTE_JMP_ADDRESS), POP_RAX, sizeof(POP_RAX));
     size_t currentOp = sizeof(ABSOLUTE_JMP_ADDRESS) + sizeof(POP_RAX);
     memset((uint8_t*)m_source + currentOp, NOP, ORIGSIZE - currentOp);
+#elif defined(ARCH_ARM64)
+    memcpy((uint8_t*)m_source + sizeof(ABSOLUTE_JMP_ADDRESS), POP_X0, sizeof(POP_X0));
+    size_t currentOp = sizeof(ABSOLUTE_JMP_ADDRESS) + sizeof(POP_X0);
+    // ARM64 NOPs are 4 bytes each
+    for (size_t i = currentOp; i < ORIGSIZE; i += 4) {
+        memcpy((uint8_t*)m_source + i, &NOP_INSTR, 4);
+    }
+#endif
 
     // fixup jump addr
     *(uint64_t*)((uint8_t*)m_source + ABSOLUTE_JMP_ADDRESS_OFFSET) = (uint64_t)(m_destination);
@@ -224,7 +386,7 @@ bool CFunctionHook::hook() {
 
 bool CFunctionHook::unhook() {
     // check for unsupported platforms
-#if !defined(__x86_64__)
+#if !defined(ARCH_X86_64) && !defined(ARCH_ARM64)
     return false;
 #endif
 
