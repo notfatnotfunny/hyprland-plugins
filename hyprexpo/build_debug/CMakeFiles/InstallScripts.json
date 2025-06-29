@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/notfatnotfunny/Hyprland/hyprexpo/build_debug/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

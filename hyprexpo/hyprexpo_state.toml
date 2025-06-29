@@ -1,0 +1,10 @@
+[repository]
+name = "hyprexpo"
+hash = "5f0f42cff1999cd54f6dd0b91f4e0a508dfd5cd7"
+url = "https://github.com/notfatnotfunny/hyprland-plugins.git"
+rev = ""
+
+[hyprexpo]
+filename = "libhyprexpo.so"
+enabled = true
+failed = false

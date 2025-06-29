@@ -57,7 +57,7 @@ EQUALS = =
 CMAKE_SOURCE_DIR = /home/notfatnotfunny/Hyprland/hyprexpo
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/notfatnotfunny/Hyprland/hyprexpo/build
+CMAKE_BINARY_DIR = /home/notfatnotfunny/Hyprland/hyprexpo/build_debug
 
 #=============================================================================
 # Directory level rules for the build root directory
@@ -85,14 +85,14 @@ clean: CMakeFiles/hyprexpo.dir/clean
 CMakeFiles/hyprexpo.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/hyprexpo.dir/build.make CMakeFiles/hyprexpo.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/hyprexpo.dir/build.make CMakeFiles/hyprexpo.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/notfatnotfunny/Hyprland/hyprexpo/build/CMakeFiles --progress-num=1,2,3,4 "Built target hyprexpo"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/notfatnotfunny/Hyprland/hyprexpo/build_debug/CMakeFiles --progress-num=1,2,3,4 "Built target hyprexpo"
 .PHONY : CMakeFiles/hyprexpo.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/hyprexpo.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/notfatnotfunny/Hyprland/hyprexpo/build/CMakeFiles 4
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/notfatnotfunny/Hyprland/hyprexpo/build_debug/CMakeFiles 4
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/hyprexpo.dir/all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/notfatnotfunny/Hyprland/hyprexpo/build/CMakeFiles 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/notfatnotfunny/Hyprland/hyprexpo/build_debug/CMakeFiles 0
 .PHONY : CMakeFiles/hyprexpo.dir/rule
 
 # Convenience name for target.
@@ -102,7 +102,7 @@ hyprexpo: CMakeFiles/hyprexpo.dir/rule
 # codegen rule for target.
 CMakeFiles/hyprexpo.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/hyprexpo.dir/build.make CMakeFiles/hyprexpo.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/notfatnotfunny/Hyprland/hyprexpo/build/CMakeFiles --progress-num=1,2,3,4 "Finished codegen for target hyprexpo"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/notfatnotfunny/Hyprland/hyprexpo/build_debug/CMakeFiles --progress-num=1,2,3,4 "Finished codegen for target hyprexpo"
 .PHONY : CMakeFiles/hyprexpo.dir/codegen
 
 # clean rule for target.

@@ -189,47 +189,64 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
 
     try {
-        // Initialize the new hook system
+        // Step 1: Try to initialize the hook system
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 1: Initializing hook system...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
         g_pHyprexpoHookSystem = new CHookSystem();
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 1: Hook system initialized successfully", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
 
-        // Find and hook the renderWorkspace function
+        // Step 2: Find renderWorkspace function
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 2: Finding renderWorkspace function...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
         auto FNS = HyprlandAPI::findFunctionsByName(PHANDLE, "renderWorkspace");
         if (FNS.empty()) {
             failNotif("no fns for hook renderWorkspace");
             throw std::runtime_error("[he] No fns for hook renderWorkspace");
         }
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 2: Found renderWorkspace function", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
 
+        // Step 3: Hook renderWorkspace
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 3: Hooking renderWorkspace...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
         g_pRenderWorkspaceHook = g_pHyprexpoHookSystem->initHook(PHANDLE, FNS[0].address, (void*)hkRenderWorkspace);
         if (!g_pRenderWorkspaceHook || !g_pRenderWorkspaceHook->hook()) {
             failNotif("Failed to hook renderWorkspace");
             throw std::runtime_error("[he] Failed to hook renderWorkspace");
         }
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 3: renderWorkspace hooked successfully", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
 
-        // Find and hook the addDamage function with pixman_region32_t parameter
+        // Step 4: Find addDamage function with pixman_region32_t parameter
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 4: Finding addDamage function...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
         FNS = HyprlandAPI::findFunctionsByName(PHANDLE, "addDamageEPK15pixman_region32");
         if (FNS.empty()) {
             failNotif("no fns for hook addDamageEPK15pixman_region32");
             throw std::runtime_error("[he] No fns for hook addDamageEPK15pixman_region32");
         }
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 4: Found addDamage function", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
 
+        // Step 5: Hook addDamageB
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 5: Hooking addDamageB...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
         g_pAddDamageBHook = g_pHyprexpoHookSystem->initHook(PHANDLE, FNS[0].address, (void*)hkAddDamageB);
         if (!g_pAddDamageBHook || !g_pAddDamageBHook->hook()) {
             failNotif("Failed to hook addDamageB");
             throw std::runtime_error("[he] Failed to hook addDamageB");
         }
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 5: addDamageB hooked successfully", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
 
-        // Find and hook the addDamage function with CBox parameter
+        // Step 6: Find addDamage function with CBox parameter
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 6: Finding addDamage CBox function...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
         FNS = HyprlandAPI::findFunctionsByName(PHANDLE, "_ZN8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
         if (FNS.empty()) {
             failNotif("no fns for hook _ZN8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
             throw std::runtime_error("[he] No fns for hook _ZN8CMonitor9addDamageERKN9Hyprutils4Math4CBoxE");
         }
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 6: Found addDamage CBox function", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
 
+        // Step 7: Hook addDamageA
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 7: Hooking addDamageA...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
         g_pAddDamageAHook = g_pHyprexpoHookSystem->initHook(PHANDLE, FNS[0].address, (void*)hkAddDamageA);
         if (!g_pAddDamageAHook || !g_pAddDamageAHook->hook()) {
             failNotif("Failed to hook addDamageA");
             throw std::runtime_error("[he] Failed to hook addDamageA");
         }
+        HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 7: addDamageA hooked successfully", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
 
     } catch (const std::exception& e) {
         failNotif("Exception during hook initialization: " + std::string(e.what()));
@@ -241,6 +258,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw;
     }
 
+    // Step 8: Register callbacks
+    HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Step 8: Registering callbacks...", CHyprColor{0.2, 0.8, 0.2, 1.0}, 2000);
     static auto P = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preRender", [](void* self, SCallbackInfo& info, std::any param) {
         if (!g_pOverview)
             return;
@@ -265,6 +284,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     HyprlandAPI::reloadConfig();
 
+    HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Plugin initialized successfully!", CHyprColor{0.2, 0.8, 0.2, 1.0}, 3000);
+
     return {"hyprexpo", "A plugin for an overview", "Vaxry", "1.0"};
 }
 
@@ -285,4 +306,4 @@ APICALL EXPORT void PLUGIN_EXIT() {
         delete g_pHyprexpoHookSystem;
         g_pHyprexpoHookSystem = nullptr;
     }
-}
+} 
