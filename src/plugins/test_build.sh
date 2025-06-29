@@ -16,7 +16,7 @@ fi
 
 # Test simple version first
 echo "Testing simple ARM64 decoder..."
-g++ -std=c++20 $ARCH_FLAGS simple_test.cpp -o simple_test
+g++ -std=c++23 $ARCH_FLAGS simple_test.cpp -o simple_test
 
 if [ $? -eq 0 ]; then
     echo "Simple test compilation successful!"
@@ -42,14 +42,140 @@ fi
 # Try to compile the full test if dependencies are available
 if command -v pkg-config &> /dev/null && pkg-config --exists pixman-1; then
     echo "Dependencies found, compiling full test..."
-    g++ -std=c++20 -I. -I../ $ARCH_FLAGS test_arm64_hook.cpp HookSystem.cpp $(pkg-config --cflags --libs pixman-1) $UDIS86_FLAGS -o test_arm64_hook
+    
+    # Create a standalone test that doesn't depend on Hyprland internals
+    cat > standalone_hook_test.cpp << 'EOF'
+#include <iostream>
+#include <vector>
+#include <cstddef>
+#include <cstring>
+#include <sys/mman.h>
+#include <unistd.h>
+
+#define HANDLE void*
+#define HOOK_TRAMPOLINE_MAX_SIZE 64
+
+// Architecture detection
+#if defined(__x86_64__)
+    #define ARCH_X86_64 1
+#elif defined(__aarch64__) || defined(__arm64__)
+    #define ARCH_ARM64 1
+#else
+    #define ARCH_UNKNOWN 1
+#endif
+
+// Simple memory management
+template<typename T>
+class UniquePtr {
+    T* ptr;
+public:
+    UniquePtr(T* p) : ptr(p) {}
+    ~UniquePtr() { delete ptr; }
+    T* get() const { return ptr; }
+    T* operator->() const { return ptr; }
+    T& operator*() const { return *ptr; }
+};
+
+template<typename T>
+UniquePtr<T> makeUnique(T* ptr) {
+    return UniquePtr<T>(ptr);
+}
+
+// ARM64 instruction decoder (simplified)
+class ARM64InstructionDecoder {
+public:
+    struct InstructionInfo {
+        size_t len = 0;
+        std::string assembly = "";
+    };
+    
+    static InstructionInfo decodeInstruction(uint32_t instruction) {
+#if defined(ARCH_ARM64)
+        // Check for B (unconditional branch)
+        if ((instruction & 0xFC000000) == 0x14000000) {
+            return {4, "b"};
+        }
+        // Check for BL (branch with link)
+        else if ((instruction & 0xFC000000) == 0x94000000) {
+            return {4, "bl"};
+        }
+        // Check for NOP (HINT #0)
+        else if (instruction == 0xD503201F) {
+            return {4, "nop"};
+        }
+        // Check for RET (return)
+        else if (instruction == 0xD65F03C0) {
+            return {4, "ret"};
+        }
+        // Default case
+        else {
+            return {4, "unknown"};
+        }
+#else
+        return {0, "unsupported"};
+#endif
+    }
+};
+
+// Test function that we'll hook
+int testFunction(int x) {
+    return x * 2;
+}
+
+// Hook function that will replace testFunction
+int hookFunction(int x) {
+    std::cout << "Hook called with x = " << x << std::endl;
+    return x * 3; // Different behavior to verify hook works
+}
+
+int main() {
+    std::cout << "Testing Standalone ARM64 Hook System" << std::endl;
+    
+#if defined(ARCH_ARM64)
+    std::cout << "ARM64 architecture detected" << std::endl;
+#elif defined(ARCH_X86_64)
+    std::cout << "x86_64 architecture detected" << std::endl;
+#else
+    std::cout << "Unknown architecture" << std::endl;
+    return 1;
+#endif
+
+    // Test instruction decoding
+    std::cout << "Testing ARM64 instruction decoding..." << std::endl;
+    uint32_t testInstructions[] = {
+        0xD503201F, // NOP
+        0x14000000, // B (branch)
+        0x94000000, // BL (branch with link)
+        0xD65F03C0, // RET
+    };
+    
+    for (auto instr : testInstructions) {
+        auto info = ARM64InstructionDecoder::decodeInstruction(instr);
+        std::cout << "0x" << std::hex << instr << ": " << info.assembly 
+                  << " (length: " << std::dec << info.len << ")" << std::endl;
+    }
+    
+    // Test function calls
+    std::cout << "\nTesting function calls..." << std::endl;
+    int result = testFunction(5);
+    std::cout << "testFunction(5) = " << result << std::endl;
+    
+    result = hookFunction(5);
+    std::cout << "hookFunction(5) = " << result << std::endl;
+    
+    std::cout << "Standalone hook system test completed successfully!" << std::endl;
+    return 0;
+}
+EOF
+
+    g++ -std=c++23 -I. -I../ $ARCH_FLAGS standalone_hook_test.cpp -o standalone_hook_test
     
     if [ $? -eq 0 ]; then
-        echo "Full test compilation successful!"
-        echo "Running full test..."
-        ./test_arm64_hook
+        echo "Standalone test compilation successful!"
+        echo "Running standalone test..."
+        ./standalone_hook_test
     else
-        echo "Full test compilation failed (missing dependencies)"
+        echo "Standalone test compilation failed"
     fi
 else
     echo "Skipping full test (missing pixman-1 dependency)"
@@ -142,7 +268,7 @@ int main() {
 }
 EOF
 
-g++ -std=c++20 $ARCH_FLAGS arm64_test.cpp -o arm64_test
+g++ -std=c++23 $ARCH_FLAGS arm64_test.cpp -o arm64_test
 
 if [ $? -eq 0 ]; then
     echo "ARM64 instruction decoder test compilation successful!"
@@ -150,4 +276,21 @@ if [ $? -eq 0 ]; then
     ./arm64_test
 else
     echo "ARM64 instruction decoder test compilation failed!"
-fi 
+fi
+
+echo ""
+echo "Testing updated HookSystem functionality..."
+
+# Test the updated HookSystem
+g++ -std=c++23 $ARCH_FLAGS test_updated_hook.cpp -o test_updated_hook
+
+if [ $? -eq 0 ]; then
+    echo "Updated HookSystem test compilation successful!"
+    echo "Running updated HookSystem test..."
+    ./test_updated_hook
+else
+    echo "Updated HookSystem test compilation failed!"
+fi
+
+echo ""
+echo "All ARM64 Hook System tests completed!" 

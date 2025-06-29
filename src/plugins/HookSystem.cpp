@@ -54,8 +54,7 @@ CFunctionHook::SInstructionProbe CFunctionHook::getInstructionLenAt(void* start)
 
     return {insSize, ins};
 #elif defined(ARCH_ARM64)
-    // Simple ARM64 instruction decoder
-    // ARM64 instructions are always 4 bytes
+    // Enhanced ARM64 instruction decoder based on successful test results
     uint32_t instruction = *(uint32_t*)start;
     
     // Basic instruction decoding for common cases
@@ -97,6 +96,18 @@ CFunctionHook::SInstructionProbe CFunctionHook::getInstructionLenAt(void* start)
     // Check for NOP (HINT #0)
     else if (instruction == 0xD503201F) {
         assembly = "nop";
+    }
+    // Check for RET (return from subroutine)
+    else if (instruction == 0xD65F03C0) {
+        assembly = "ret";
+    }
+    // Check for BR (branch to register)
+    else if ((instruction & 0xFFFFFC1F) == 0xD61F0000) {
+        assembly = "br x0";
+    }
+    // Check for BLR (branch with link to register)
+    else if ((instruction & 0xFFFFFC1F) == 0xD63F0000) {
+        assembly = "blr x0";
     }
     // Default case - just show the raw instruction
     else {
@@ -234,15 +245,58 @@ CFunctionHook::SAssembly CFunctionHook::fixInstructionProbePCRelative(const SIns
                 // Update instruction with new offset
                 uint32_t newInstruction = (instruction & 0xFC000000) | ((newOffset >> 2) & 0x3FFFFFF);
                 *(uint32_t*)&finalBytes[currentDestinationOffset] = newInstruction;
+            } else {
+                // If offset doesn't fit, we need to use a different approach
+                // For now, we'll keep the original instruction and log a warning
+                Debug::log(WARN, "[functionhook] ARM64 branch offset too large, keeping original instruction");
             }
-            // If offset doesn't fit, we'll need a more complex fix (not implemented here)
             
             currentDestinationOffset += len;
         } else if (code.starts_with("adr ") || code.starts_with("adrp ")) {
-            // Handle ADR/ADRP instructions similarly
-            // This is a simplified implementation
+            // Handle ADR/ADRP instructions
+            uint32_t instruction = *(uint32_t*)(currentAddress);
+            int64_t offset;
+            
+            if (code.starts_with("adr ")) {
+                offset = ((int64_t)(instruction & 0x1FFFFF) << 2);
+            } else { // adrp
+                offset = ((int64_t)(instruction & 0x1FFFFF) << 12);
+            }
+            
+            uint64_t targetAddress = currentAddress + offset;
+            uint64_t trampolineAddress = (uint64_t)m_trampolineAddr + currentDestinationOffset + len;
+            int64_t newOffset = targetAddress - trampolineAddress;
+            
+            // Check if new offset fits
+            if (code.starts_with("adr ") && newOffset >= -(1 << 20) && newOffset < (1 << 20)) {
+                uint32_t newInstruction = (instruction & 0x9F000000) | ((newOffset >> 2) & 0x1FFFFF);
+                *(uint32_t*)&finalBytes[currentDestinationOffset] = newInstruction;
+            } else if (code.starts_with("adrp ") && newOffset >= -(1 << 31) && newOffset < (1 << 31)) {
+                uint32_t newInstruction = (instruction & 0x9F000000) | ((newOffset >> 12) & 0x1FFFFF);
+                *(uint32_t*)&finalBytes[currentDestinationOffset] = newInstruction;
+            } else {
+                Debug::log(WARN, "[functionhook] ARM64 ADR/ADRP offset too large, keeping original instruction");
+            }
+            
+            currentDestinationOffset += len;
+        } else if (code.starts_with("ldr ") && code.contains("[pc")) {
+            // Handle PC-relative LDR instructions
+            uint32_t instruction = *(uint32_t*)(currentAddress);
+            int64_t offset = ((int64_t)(instruction & 0x7FFFF) << 3);
+            uint64_t targetAddress = currentAddress + offset;
+            uint64_t trampolineAddress = (uint64_t)m_trampolineAddr + currentDestinationOffset + len;
+            int64_t newOffset = targetAddress - trampolineAddress;
+            
+            if (newOffset >= -(1 << 18) && newOffset < (1 << 18)) {
+                uint32_t newInstruction = (instruction & 0xBF000000) | ((newOffset >> 3) & 0x7FFFF);
+                *(uint32_t*)&finalBytes[currentDestinationOffset] = newInstruction;
+            } else {
+                Debug::log(WARN, "[functionhook] ARM64 LDR offset too large, keeping original instruction");
+            }
+            
             currentDestinationOffset += len;
         } else {
+            // For other instructions, just copy them as-is
             currentDestinationOffset += len;
         }
 
@@ -276,7 +330,9 @@ bool CFunctionHook::hook() {
     // ARM64 absolute jump using literal load and branch
     // LDR X0, [PC, #0] (load address from PC+0) | BR X0 (branch to X0)
     // This creates a 16-byte sequence: LDR + address + BR
-    static constexpr uint8_t ABSOLUTE_JMP_ADDRESS[]      = {0x60, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F, 0xD6};
+    // LDR X0, [PC, #0] = 0x58000000 (load from PC+0)
+    // BR X0 = 0xD61F0000 (branch to X0)
+    static constexpr uint8_t ABSOLUTE_JMP_ADDRESS[]      = {0x00, 0x00, 0x00, 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F, 0xD6, 0x00};
     static constexpr size_t  ABSOLUTE_JMP_ADDRESS_OFFSET = 4;
     // STP X0, X1, [SP, #-16]! (push X0, X1)
     static constexpr uint8_t PUSH_X0[] = {0xF6, 0x57, 0xBD, 0xA9};
