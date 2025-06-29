@@ -213,7 +213,7 @@ class CXWM {
     std::vector<SP<CX11DataOffer>>            m_dndDataOffers;
 
     inline xcb_connection_t*                  getConnection() {
-        return m_connection ? m_connection->getConnection() : nullptr;
+        return m_connection ? (xcb_connection_t*)*m_connection : nullptr;
     }
     struct {
         CHyprSignalListener newWLSurface;
