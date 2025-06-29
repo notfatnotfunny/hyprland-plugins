@@ -7,7 +7,12 @@ project(hyprexpo
 
 set(CMAKE_CXX_STANDARD 23)
 
-file(GLOB_RECURSE SRC "*.cpp")
+# Only compile main.cpp, exclude main_fallback.cpp
+set(SRC 
+    main.cpp
+    OverviewPassElement.cpp
+    overview.cpp
+)
 
 add_library(hyprexpo SHARED ${SRC})
 

@@ -1,0 +1,10 @@
+[repository]
+name = "hyprexpo"
+hash = ""
+url = "local"
+rev = ""
+
+hyprexpo
+filename = "libhyprexpo.so"
+enabled = true
+failed = false 
